@@ -1,5 +1,6 @@
 use super::*;
 
+/// Structure, representing exchange pool
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Encode, Decode, Clone, PartialEq, Eq, Debug)]
 pub struct Exchange<T: Trait> {

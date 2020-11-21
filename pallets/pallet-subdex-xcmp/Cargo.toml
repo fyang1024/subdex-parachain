@@ -4,7 +4,7 @@ description = 'FRAME pallet template'
 edition = '2018'
 homepage = 'https://substrate.dev'
 license = 'Unlicense'
-name = 'dex-xcmp'
+name = 'pallet-subdex-xcmp'
 repository = 'https://github.com/substrate-developer-hub/substrate-pallet-template/'
 version = '2.0.0-rc5'
 
@@ -53,8 +53,8 @@ default-features = false
 git = 'https://github.com/paritytech/substrate.git'
 branch = "rococo-branch"
 
-[dependencies.dex-pallet]
-path = '../dex-pallet'
+[dependencies.pallet-subdex]
+path = '../pallet-subdex'
 default-features = false
 
 [features]

@@ -8,8 +8,8 @@ edition = '2018'
 serde = { version = "1.0.101", default-features = false, optional = true, features = ["derive"] }
 codec = { package = "parity-scale-codec", version = "1.3.0", default-features = false, features = ["derive"] }
 
-dex-pallet = { path = "../pallets/dex-pallet", default-features = false}
-dex-xcmp = { path = "../pallets/dex-xcmp", default-features = false}
+pallet-subdex = { path = "../pallets/pallet-subdex", default-features = false}
+pallet-subdex-xcmp = { path = "../pallets/pallet-subdex-xcmp", default-features = false}
 
 # Substrate dependencies
 sp-std = { git = "https://github.com/paritytech/substrate", default-features = false, branch = "rococo-branch" }
@@ -72,8 +72,8 @@ std = [
 	"cumulus-message-broker/std",
 	"cumulus-upward-message/std",
 	"cumulus-primitives/std",
-	"dex-pallet/std",
-	"dex-xcmp/std"
+	"pallet-subdex/std",
+	"pallet-subdex-xcmp/std"
 ]
 # Will be enabled by the `wasm-builder` when building the runtime for WASM.
 runtime-wasm = [
