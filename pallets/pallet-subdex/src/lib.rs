@@ -27,9 +27,25 @@ mod tests;
 #[cfg(feature = "std")]
 pub use serde::{Deserialize, Serialize};
 
+/// Type, used for dex balances representation
 pub type BalanceOf<T> =
     <<T as Trait>::Currency as Currency<<T as frame_system::Trait>::AccountId>>::Balance;
 
+/// Enum, representing either main network currency, supported natively or our internal represenation for assets from other parachains
+#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+#[derive(Encode, Decode, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Asset<AssetId: Default + Debug + Ord + Copy> {
+    MainNetworkCurrency,
+    ParachainAsset(AssetId),
+}
+
+impl<AssetId: Default + Debug + Ord + Copy> Default for Asset<AssetId> {
+    fn default() -> Self {
+        Self::MainNetworkCurrency
+    }
+}
+
+/// Represents data, needed to charge treasury fee
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 #[derive(Encode, Decode, Clone, PartialEq, Eq, Debug, Default)]
 pub struct DexTreasury<AccountId: Default + Debug, Balance: Default + Debug> {
@@ -79,8 +95,6 @@ pub trait Trait: system::Trait + pallet_timestamp::Trait {
         + PartialEq
         + Ord;
 
-    type KSMAssetId: Get<Self::AssetId>;
-
     type FeeRateNominator: Get<BalanceOf<Self>>;
 
     type FeeRateDenominator: Get<BalanceOf<Self>>;
@@ -88,7 +102,7 @@ pub trait Trait: system::Trait + pallet_timestamp::Trait {
 
 decl_storage! {
     trait Store for Module<T: Trait> as TemplateModule {
-        pub Exchanges get(fn exchanges): double_map hasher(blake2_128_concat) T::AssetId, hasher(blake2_128_concat) T::AssetId => Exchange<T>;
+        pub Exchanges get(fn exchanges): double_map hasher(blake2_128_concat) Asset<T::AssetId>, hasher(blake2_128_concat) Asset<T::AssetId> => Exchange<T>;
 
         // Balances of assets, located on other parachains.
         pub AssetBalances get(fn asset_balances):
@@ -116,15 +130,15 @@ decl_event!(
     pub enum Event<T>
     where
         AccountId = <T as system::Trait>::AccountId,
-        AssetId = <T as Trait>::AssetId,
+        Asset = Asset<<T as Trait>::AssetId>,
         Shares = BalanceOf<T>,
         Balance = BalanceOf<T>,
         TreasuryFee = Option<BalanceOf<T>>,
     {
-        Exchanged(AccountId, AssetId, Balance, AssetId, Balance, TreasuryFee),
-        Invested(AccountId, AssetId, AssetId, Shares),
-        Divested(AccountId, AssetId, AssetId, Shares),
-        Withdrawn(AssetId, Balance, AccountId),
+        // account id, asset in, asset in amount, asset out, asset out amount, treasury fee
+        Exchanged(AccountId, Asset, Balance, Asset, Balance, TreasuryFee),
+        Invested(AccountId, Asset, Asset, Shares),
+        Divested(AccountId, Asset, Asset, Shares),
     }
 );
 
@@ -161,11 +175,11 @@ decl_module! {
         fn deposit_event() = default;
 
         #[weight = 10_000]
-        pub fn initialize_exchange(origin, first_asset_id: T::AssetId, first_asset_amount: BalanceOf<T>, second_asset_id: T::AssetId, second_asset_amount: BalanceOf<T>) -> dispatch::DispatchResult {
+        pub fn initialize_exchange(origin, first_asset: Asset<T::AssetId>, first_asset_amount: BalanceOf<T>, second_asset: Asset<T::AssetId>, second_asset_amount: BalanceOf<T>) -> dispatch::DispatchResult {
             let sender = ensure_signed(origin)?;
 
-            let (first_asset_id, first_asset_amount, second_asset_id, second_asset_amount) =
-                Self::adjust_assets_amount_order(first_asset_id, first_asset_amount, second_asset_id, second_asset_amount);
+            let (first_asset, first_asset_amount, second_asset, second_asset_amount) =
+                Self::adjust_assets_amount_order(first_asset, first_asset_amount, second_asset, second_asset_amount);
 
             // TODO adjust first and second min asset amounts
             ensure!(
@@ -177,9 +191,9 @@ decl_module! {
                 Error::<T>::LowSecondAssetAmount
             );
 
-            Self::ensure_exchange_not_exists(first_asset_id, second_asset_id)?;
-            Self::exchanges(first_asset_id, second_asset_id).ensure_launch()?;
-            Self::ensure_sufficient_balances(&sender, first_asset_id, first_asset_amount, second_asset_id, second_asset_amount)?;
+            Self::ensure_exchange_not_exists(first_asset, second_asset)?;
+            Self::exchanges(first_asset, second_asset).ensure_launch()?;
+            Self::ensure_sufficient_balances(&sender, first_asset, first_asset_amount, second_asset, second_asset_amount)?;
 
             // TODO adjust shares allocation
             let (exchange, initial_shares) = Exchange::<T>::initialize_new(first_asset_amount, second_asset_amount, sender.clone())?;
@@ -188,20 +202,20 @@ decl_module! {
             // == MUTATION SAFE ==
             //
 
-            Self::slash_assets(&sender, first_asset_id, first_asset_amount, second_asset_id, second_asset_amount);
+            Self::slash_assets(&sender, first_asset, first_asset_amount, second_asset, second_asset_amount);
 
-            Exchanges::<T>::insert(first_asset_id, second_asset_id, exchange);
+            Exchanges::<T>::insert(first_asset, second_asset, exchange);
 
-            Self::deposit_event(RawEvent::Invested(sender, first_asset_id, second_asset_id, initial_shares));
+            Self::deposit_event(RawEvent::Invested(sender, first_asset, second_asset, initial_shares));
             Ok(())
         }
 
         #[weight = 10_000]
         pub fn swap_to_exact(
             origin,
-            asset_in: T::AssetId,
+            asset_in: Asset<T::AssetId>,
             asset_in_amount: BalanceOf<T>,
-            asset_out: T::AssetId,
+            asset_out: Asset<T::AssetId>,
             min_asset_out_amount: BalanceOf<T>,
             receiver: T::AccountId
         ) -> dispatch::DispatchResult {
@@ -270,16 +284,16 @@ decl_module! {
         }
 
         #[weight = 10_000]
-        pub fn invest_liquidity(origin, first_asset_id: T::AssetId, second_asset_id: T::AssetId, shares: BalanceOf<T>) -> dispatch::DispatchResult {
+        pub fn invest_liquidity(origin, first_asset: Asset<T::AssetId>, second_asset: Asset<T::AssetId>, shares: BalanceOf<T>) -> dispatch::DispatchResult {
             let sender = ensure_signed(origin)?;
 
-            let (first_asset_id, second_asset_id, _) =
-                Self::adjust_assets_order(first_asset_id, second_asset_id);
+            let (first_asset, second_asset, _) =
+                Self::adjust_assets_order(first_asset, second_asset);
 
-            let mut exchange = Self::ensure_exchange_exists(first_asset_id, second_asset_id)?;
+            let mut exchange = Self::ensure_exchange_exists(first_asset, second_asset)?;
             let (first_asset_cost, second_asset_cost) = exchange.calculate_costs(shares)?;
 
-            Self::ensure_sufficient_balances(&sender, first_asset_id, first_asset_cost, second_asset_id, second_asset_cost)?;
+            Self::ensure_sufficient_balances(&sender, first_asset, first_asset_cost, second_asset, second_asset_cost)?;
 
             // Invest funds into exchange
             exchange.invest(first_asset_cost, second_asset_cost, shares, &sender)?;
@@ -289,36 +303,36 @@ decl_module! {
             //
 
             // Slash user assets
-            Self::slash_assets(&sender, first_asset_id, first_asset_cost, second_asset_id, second_asset_cost);
+            Self::slash_assets(&sender, first_asset, first_asset_cost, second_asset, second_asset_cost);
 
             // Update runtime exchange storage state
-            <Exchanges<T>>::insert(first_asset_id, second_asset_id, exchange);
+            <Exchanges<T>>::insert(first_asset, second_asset, exchange);
 
-            Self::deposit_event(RawEvent::Invested(sender, first_asset_id, second_asset_id, shares));
+            Self::deposit_event(RawEvent::Invested(sender, first_asset, second_asset, shares));
             Ok(())
         }
 
         #[weight = 10_000]
         pub fn divest_liquidity(
             origin,
-            first_asset_id: T::AssetId,
-            second_asset_id: T::AssetId,
+            first_asset: Asset<T::AssetId>,
+            second_asset: Asset<T::AssetId>,
             shares_burned:  BalanceOf<T>,
             min_first_asset_received: BalanceOf<T>,
             min_second_asset_received: BalanceOf<T>
         ) -> dispatch::DispatchResult {
             let sender = ensure_signed(origin)?;
 
-            let (first_asset_id, second_asset_id, _) = Self::adjust_assets_order(first_asset_id, second_asset_id);
+            let (first_asset, second_asset, _) = Self::adjust_assets_order(first_asset, second_asset);
 
-            let mut exchange = Self::ensure_exchange_exists(first_asset_id, second_asset_id)?;
+            let mut exchange = Self::ensure_exchange_exists(first_asset, second_asset)?;
             exchange.ensure_burned_shares(&sender, shares_burned)?;
 
             let (first_asset_cost, second_asset_cost) = exchange.calculate_costs(shares_burned)?;
             Self::ensure_divest_expectations(first_asset_cost, second_asset_cost, min_first_asset_received, min_second_asset_received)?;
 
             // Avoid overflow risks
-            Self::ensure_can_hold_balances(&sender, first_asset_id, first_asset_cost, second_asset_id, second_asset_cost)?;
+            Self::ensure_can_hold_balances(&sender, first_asset, first_asset_cost, second_asset, second_asset_cost)?;
 
             // Divest funds from exchange
             exchange.divest(first_asset_cost, second_asset_cost, shares_burned, &sender)?;
@@ -327,12 +341,12 @@ decl_module! {
             // == MUTATION SAFE ==
             //
 
-            Self::mint_assets(&sender, first_asset_id, first_asset_cost, second_asset_id, second_asset_cost);
+            Self::mint_assets(&sender, first_asset, first_asset_cost, second_asset, second_asset_cost);
 
             // Update runtime exchange storage state
-            <Exchanges<T>>::insert(first_asset_id, second_asset_id, exchange);
+            <Exchanges<T>>::insert(first_asset, second_asset, exchange);
 
-            Self::deposit_event(RawEvent::Divested(sender, first_asset_id, second_asset_id, shares_burned));
+            Self::deposit_event(RawEvent::Divested(sender, first_asset, second_asset, shares_burned));
             Ok(())
         }
     }
@@ -340,66 +354,82 @@ decl_module! {
 
 impl<T: Trait> Module<T> {
     pub fn ensure_valid_exchange(
-        asset_in: T::AssetId,
-        asset_out: T::AssetId,
-    ) -> dispatch::DispatchResult {
-        ensure!(asset_in != asset_out, Error::<T>::InvalidExchange);
-        Ok(())
+        asset_in: Asset<T::AssetId>,
+        asset_out: Asset<T::AssetId>,
+    ) -> Result<(), Error<T>> {
+        match (asset_in, asset_out) {
+            (Asset::MainNetworkCurrency, Asset::MainNetworkCurrency) => {
+                Err(Error::<T>::InvalidExchange)
+            }
+            (Asset::ParachainAsset(asset_in_id), Asset::ParachainAsset(asset_out_id))
+                if asset_in_id == asset_out_id =>
+            {
+                Err(Error::<T>::InvalidExchange)
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn slash_assets(
         from: &T::AccountId,
-        first_asset_id: T::AssetId,
+        first_asset: Asset<T::AssetId>,
         first_asset_amount: BalanceOf<T>,
-        second_asset_id: T::AssetId,
+        second_asset: Asset<T::AssetId>,
         second_asset_amount: BalanceOf<T>,
     ) {
-        Self::slash_asset(from, first_asset_id, first_asset_amount);
-        Self::slash_asset(from, second_asset_id, second_asset_amount);
+        Self::slash_asset(from, first_asset, first_asset_amount);
+        Self::slash_asset(from, second_asset, second_asset_amount);
     }
 
-    pub fn slash_asset(from: &T::AccountId, asset_id: T::AssetId, asset_amount: BalanceOf<T>) {
+    pub fn slash_asset(from: &T::AccountId, asset: Asset<T::AssetId>, asset_amount: BalanceOf<T>) {
         // TODO
         // Refactor, when we`ll have native support for multiple currencies.
-        if asset_id == T::KSMAssetId::get() {
-            let _ = T::Currency::slash(from, asset_amount);
-        } else {
-            <AssetBalances<T>>::mutate(from, asset_id, |total_asset_amount| {
-                *total_asset_amount -= asset_amount
-            });
+        match asset {
+            Asset::MainNetworkCurrency => {
+                T::Currency::slash(from, asset_amount);
+            }
+            Asset::ParachainAsset(asset_id) => {
+                <AssetBalances<T>>::mutate(from, asset_id, |total_asset_amount| {
+                    *total_asset_amount -= asset_amount
+                });
+            }
         }
     }
 
     pub fn mint_assets(
         to: &T::AccountId,
-        first_asset_id: T::AssetId,
+        first_asset: Asset<T::AssetId>,
         first_asset_amount: BalanceOf<T>,
-        second_asset_id: T::AssetId,
+        second_asset: Asset<T::AssetId>,
         second_asset_amount: BalanceOf<T>,
     ) {
-        Self::mint_asset(to, first_asset_id, first_asset_amount);
-        Self::mint_asset(to, second_asset_id, second_asset_amount);
+        Self::mint_asset(to, first_asset, first_asset_amount);
+        Self::mint_asset(to, second_asset, second_asset_amount);
     }
 
-    pub fn mint_asset(to: &T::AccountId, asset_id: T::AssetId, asset_amount: BalanceOf<T>) {
+    pub fn mint_asset(to: &T::AccountId, asset: Asset<T::AssetId>, asset_amount: BalanceOf<T>) {
         // TODO
         // Refactor, when we`ll have native support for multiple currencies.
-        if asset_id == T::KSMAssetId::get() {
-            T::Currency::deposit_creating(to, asset_amount);
-        } else if <AssetBalances<T>>::contains_key(to, asset_id) {
-            <AssetBalances<T>>::mutate(to, asset_id, |asset_total_amount| {
-                *asset_total_amount += asset_amount;
-            });
-        } else {
-            <AssetBalances<T>>::insert(to, asset_id, asset_amount);
+        match asset {
+            Asset::MainNetworkCurrency => {
+                T::Currency::deposit_creating(to, asset_amount);
+            }
+            Asset::ParachainAsset(asset_id) if <AssetBalances<T>>::contains_key(to, asset_id) => {
+                <AssetBalances<T>>::mutate(to, asset_id, |asset_total_amount| {
+                    *asset_total_amount += asset_amount;
+                });
+            }
+            Asset::ParachainAsset(asset_id) => {
+                <AssetBalances<T>>::insert(to, asset_id, asset_amount);
+            }
         }
     }
 
     pub fn ensure_exchange_exists(
-        first_asset_id: T::AssetId,
-        second_asset_id: T::AssetId,
+        first_asset: Asset<T::AssetId>,
+        second_asset: Asset<T::AssetId>,
     ) -> Result<Exchange<T>, Error<T>> {
-        let exchange = Self::exchanges(first_asset_id, second_asset_id);
+        let exchange = Self::exchanges(first_asset, second_asset);
 
         ensure!(
             exchange.invariant > BalanceOf::<T>::zero(),
@@ -409,44 +439,73 @@ impl<T: Trait> Module<T> {
     }
 
     pub fn adjust_assets_amount_order(
-        first_asset_id: T::AssetId,
+        first_asset: Asset<T::AssetId>,
         first_asset_amount: BalanceOf<T>,
-        second_asset_id: T::AssetId,
+        second_asset: Asset<T::AssetId>,
         second_asset_amount: BalanceOf<T>,
-    ) -> (T::AssetId, BalanceOf<T>, T::AssetId, BalanceOf<T>) {
-        if first_asset_id > second_asset_id {
-            (
-                second_asset_id,
-                second_asset_amount,
-                first_asset_id,
+    ) -> (
+        Asset<T::AssetId>,
+        BalanceOf<T>,
+        Asset<T::AssetId>,
+        BalanceOf<T>,
+    ) {
+        match (first_asset, second_asset) {
+            (Asset::MainNetworkCurrency, Asset::ParachainAsset(_)) => (
+                first_asset,
                 first_asset_amount,
-            )
-        } else {
-            (
-                first_asset_id,
-                first_asset_amount,
-                second_asset_id,
+                second_asset,
                 second_asset_amount,
-            )
+            ),
+            (Asset::ParachainAsset(_), Asset::MainNetworkCurrency) => (
+                second_asset,
+                second_asset_amount,
+                first_asset,
+                first_asset_amount,
+            ),
+            (Asset::ParachainAsset(first_asset_id), Asset::ParachainAsset(second_asset_id))
+                if first_asset_id > second_asset_id =>
+            {
+                (
+                    second_asset,
+                    second_asset_amount,
+                    first_asset,
+                    first_asset_amount,
+                )
+            }
+            _ => (
+                first_asset,
+                first_asset_amount,
+                second_asset,
+                second_asset_amount,
+            ),
         }
     }
 
     pub fn adjust_assets_order(
-        first_asset_id: T::AssetId,
-        second_asset_id: T::AssetId,
-    ) -> (T::AssetId, T::AssetId, bool) {
-        if first_asset_id > second_asset_id {
-            (second_asset_id, first_asset_id, true)
-        } else {
-            (first_asset_id, second_asset_id, false)
+        first_asset: Asset<T::AssetId>,
+        second_asset: Asset<T::AssetId>,
+    ) -> (Asset<T::AssetId>, Asset<T::AssetId>, bool) {
+        match (first_asset, second_asset) {
+            (Asset::MainNetworkCurrency, Asset::ParachainAsset(_)) => {
+                (first_asset, second_asset, false)
+            }
+            (Asset::ParachainAsset(_), Asset::MainNetworkCurrency) => {
+                (second_asset, first_asset, true)
+            }
+            (Asset::ParachainAsset(first_asset_id), Asset::ParachainAsset(second_asset_id))
+                if first_asset_id > second_asset_id =>
+            {
+                (second_asset, first_asset, true)
+            }
+            _ => (first_asset, second_asset, false),
         }
     }
 
     pub fn ensure_exchange_not_exists(
-        first_asset_id: T::AssetId,
-        second_asset_id: T::AssetId,
+        first_asset: Asset<T::AssetId>,
+        second_asset: Asset<T::AssetId>,
     ) -> dispatch::DispatchResult {
-        let first_exchange = Self::exchanges(first_asset_id, second_asset_id);
+        let first_exchange = Self::exchanges(first_asset, second_asset);
 
         ensure!(
             first_exchange.invariant == BalanceOf::<T>::zero(),
@@ -457,9 +516,9 @@ impl<T: Trait> Module<T> {
 
     pub fn ensure_sufficient_balances(
         sender: &T::AccountId,
-        asset_in: T::AssetId,
+        asset_in: Asset<T::AssetId>,
         asset_in_amount: BalanceOf<T>,
-        asset_out: T::AssetId,
+        asset_out: Asset<T::AssetId>,
         asset_out_amount: BalanceOf<T>,
     ) -> dispatch::DispatchResult {
         Self::ensure_sufficient_balance(sender, asset_in, asset_in_amount)?;
@@ -468,12 +527,12 @@ impl<T: Trait> Module<T> {
 
     pub fn ensure_sufficient_balance(
         from: &T::AccountId,
-        asset_id: T::AssetId,
+        asset: Asset<T::AssetId>,
         amount: BalanceOf<T>,
     ) -> dispatch::DispatchResult {
-        match asset_id {
+        match asset {
             // Here we also can add other currencies, with native dex parachain support.
-            asset_id if asset_id == T::KSMAssetId::get() => {
+            Asset::MainNetworkCurrency => {
                 let new_balance = T::Currency::free_balance(from)
                     .checked_sub(&amount)
                     .ok_or(Error::<T>::InsufficientKsmBalance)?;
@@ -486,7 +545,9 @@ impl<T: Trait> Module<T> {
                 )?;
                 Ok(())
             }
-            asset_id if Self::asset_balances(from, asset_id) >= amount => Ok(()),
+            Asset::ParachainAsset(asset_id) if Self::asset_balances(from, asset_id) >= amount => {
+                Ok(())
+            }
             _ => Err(Error::<T>::InsufficientOtherAssetBalance.into()),
         }
     }
@@ -494,17 +555,20 @@ impl<T: Trait> Module<T> {
     // Avoid overflow risks
     pub fn ensure_can_hold_balance(
         who: &T::AccountId,
-        asset_id: T::AssetId,
+        asset: Asset<T::AssetId>,
         amount: BalanceOf<T>,
     ) -> dispatch::DispatchResult {
-        if asset_id == T::KSMAssetId::get() {
-            T::Currency::free_balance(who)
-                .checked_add(&amount)
-                .ok_or(Error::<T>::OverflowOccured)?;
-        } else {
-            Self::asset_balances(who, asset_id)
-                .checked_add(&amount)
-                .ok_or(Error::<T>::OverflowOccured)?;
+        match asset {
+            Asset::MainNetworkCurrency => {
+                T::Currency::free_balance(who)
+                    .checked_add(&amount)
+                    .ok_or(Error::<T>::OverflowOccured)?;
+            }
+            Asset::ParachainAsset(asset_id) => {
+                Self::asset_balances(who, asset_id)
+                    .checked_add(&amount)
+                    .ok_or(Error::<T>::OverflowOccured)?;
+            }
         }
         Ok(())
     }
@@ -512,13 +576,13 @@ impl<T: Trait> Module<T> {
     // Avoid overflow risks
     pub fn ensure_can_hold_balances(
         who: &T::AccountId,
-        first_asset_id: T::AssetId,
+        first_asset: Asset<T::AssetId>,
         first_asset_amount: BalanceOf<T>,
-        second_asset_id: T::AssetId,
+        second_asset: Asset<T::AssetId>,
         second_asset_amount: BalanceOf<T>,
     ) -> dispatch::DispatchResult {
-        Self::ensure_can_hold_balance(who, first_asset_id, first_asset_amount)?;
-        Self::ensure_can_hold_balance(who, second_asset_id, second_asset_amount)
+        Self::ensure_can_hold_balance(who, first_asset, first_asset_amount)?;
+        Self::ensure_can_hold_balance(who, second_asset, second_asset_amount)
     }
 
     pub fn ensure_divest_expectations(

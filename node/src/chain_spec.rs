@@ -2,7 +2,7 @@
 
 use cumulus_primitives::ParaId;
 use parachain_runtime::{
-    dex_pallet::DexTreasury, AccountId, BalancesConfig, DexPalletConfig, DexXCMPConfig,
+    pallet_subdex::DexTreasury, AccountId, BalancesConfig, DexPalletConfig, DexXCMPConfig,
     GenesisConfig, Signature, SudoConfig, SystemConfig, WASM_BINARY,
 };
 use sc_chain_spec::{ChainSpecExtension, ChainSpecGroup};
@@ -120,13 +120,13 @@ fn testnet_genesis(
         pallet_sudo: Some(SudoConfig {
             key: root_key.clone(),
         }),
-        dex_pallet: Some(DexPalletConfig {
+        pallet_subdex: Some(DexPalletConfig {
             dex_treasury: DexTreasury::new(root_key, 1, 2),
             assets: vec![0, 1, 2],
             initial_balance: 10u128.pow(12 + 6),
             endowed_accounts: endowed_accounts,
         }),
-        dex_xcmp: Some(DexXCMPConfig {
+        pallet_subdex_xcmp: Some(DexXCMPConfig {
             // 0 id reserved for main currency
             next_asset_id: 1,
         }),

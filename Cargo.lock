@@ -1171,38 +1171,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dex-pallet"
-version = "2.0.0-rc5"
-dependencies = [
- "frame-support",
- "frame-system",
- "pallet-balances",
- "pallet-timestamp",
- "parity-scale-codec",
- "serde",
- "sp-arithmetic",
- "sp-core",
- "sp-io",
- "sp-runtime",
- "sp-std",
-]
-
-[[package]]
-name = "dex-xcmp"
-version = "2.0.0-rc5"
-dependencies = [
- "cumulus-primitives",
- "cumulus-upward-message",
- "dex-pallet",
- "frame-support",
- "frame-system",
- "parity-scale-codec",
- "polkadot-parachain",
- "serde",
- "sp-arithmetic",
-]
-
-[[package]]
 name = "difference"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4027,6 +3995,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-subdex"
+version = "2.0.0-rc5"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "pallet-balances",
+ "pallet-timestamp",
+ "parity-scale-codec",
+ "serde",
+ "sp-arithmetic",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
+name = "pallet-subdex-xcmp"
+version = "2.0.0-rc5"
+dependencies = [
+ "cumulus-primitives",
+ "cumulus-upward-message",
+ "frame-support",
+ "frame-system",
+ "pallet-subdex",
+ "parity-scale-codec",
+ "polkadot-parachain",
+ "serde",
+ "sp-arithmetic",
+]
+
+[[package]]
 name = "pallet-sudo"
 version = "2.0.0-rc5"
 source = "git+https://github.com/paritytech/substrate?branch=rococo-branch#83544d41abcc0e3d3cbbd6aa510e04dc50863e5c"
@@ -4216,13 +4216,13 @@ dependencies = [
  "cumulus-primitives",
  "cumulus-runtime",
  "cumulus-upward-message",
- "dex-pallet",
- "dex-xcmp",
  "frame-executive",
  "frame-support",
  "frame-system",
  "pallet-balances",
  "pallet-randomness-collective-flip",
+ "pallet-subdex",
+ "pallet-subdex-xcmp",
  "pallet-sudo",
  "pallet-timestamp",
  "pallet-transaction-payment",

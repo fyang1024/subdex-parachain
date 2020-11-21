@@ -22,7 +22,7 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
-use dex_xcmp::XCMPMessage;
+use pallet_subdex_xcmp::XCMPMessage;
 use sp_api::impl_runtime_apis;
 use sp_core::OpaqueMetadata;
 use sp_runtime::{
@@ -45,9 +45,9 @@ pub use frame_support::{
     StorageValue,
 };
 
-pub use dex_pallet;
-pub use dex_pallet::Call as DexPalletCall;
 pub use pallet_balances::Call as BalancesCall;
+pub use pallet_subdex;
+pub use pallet_subdex::Call as DexPalletCall;
 pub use pallet_timestamp::Call as TimestampCall;
 #[cfg(any(feature = "std", test))]
 pub use sp_runtime::BuildStorage;
@@ -250,34 +250,30 @@ parameter_types! {
 impl cumulus_message_broker::Trait for Runtime {
     type Event = Event;
     type DownwardMessageHandlers = DexXCMP;
-    type UpwardMessage = cumulus_upward_message::WestendUpwardMessage;
+    type UpwardMessage = cumulus_upward_message::RococoUpwardMessage;
     type ParachainId = ParachainId;
     type XCMPMessage = XCMPMessage<AccountId, Balance, AssetId>;
     type XCMPMessageHandlers = DexXCMP;
 }
 
-impl dex_xcmp::Trait for Runtime {
+impl pallet_subdex_xcmp::Trait for Runtime {
     type Event = Event;
     type UpwardMessageSender = MessageBroker;
-    type UpwardMessage = cumulus_upward_message::WestendUpwardMessage;
+    type UpwardMessage = cumulus_upward_message::RococoUpwardMessage;
     type XCMPMessageSender = MessageBroker;
 }
 
 parameter_types! {
-    // Main currency id
-    pub const KSMAssetId: AssetId = 0;
-
     // 3/1000
     pub const FeeRateNominator: Balance = 3;
     pub const FeeRateDenominator: Balance = 1000;
 }
 
-impl dex_pallet::Trait for Runtime {
+impl pallet_subdex::Trait for Runtime {
     type Event = Event;
     type Currency = Balances;
     type IMoment = u64;
     type AssetId = AssetId;
-    type KSMAssetId = KSMAssetId;
     type FeeRateNominator = FeeRateNominator;
     type FeeRateDenominator = FeeRateDenominator;
 }
@@ -294,10 +290,10 @@ construct_runtime! {
         RandomnessCollectiveFlip: pallet_randomness_collective_flip::{Module, Call, Storage},
         ParachainUpgrade: cumulus_parachain_upgrade::{Module, Call, Storage, Inherent, Event},
         MessageBroker: cumulus_message_broker::{Module, Call, Inherent, Event<T>},
-        DexXCMP: dex_xcmp::{Module, Call, Event<T>, Storage, Config<T>},
+        DexXCMP: pallet_subdex_xcmp::{Module, Call, Event<T>, Storage, Config<T>},
         TransactionPayment: pallet_transaction_payment::{Module, Storage},
         Balances: pallet_balances::{Module, Call, Storage, Config<T>, Event<T>},
-        DexPallet: dex_pallet::{Module, Config<T>, Call, Storage, Event<T>},
+        DexPallet: pallet_subdex::{Module, Config<T>, Call, Storage, Event<T>},
     }
 }
 
