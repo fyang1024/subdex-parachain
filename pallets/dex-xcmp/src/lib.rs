@@ -80,7 +80,10 @@ decl_event! {
     pub enum Event<T> where
         AccountId = <T as frame_system::Trait>::AccountId,
         Balance = BalanceOf<T>,
-        AssetId = AssetIdOf<T>,
+        // None if main currency
+        ParaChainAssetId = Option<AssetIdOf<T>>,
+        // Our internal para asset id representation
+        DexAssetId = AssetIdOf<T>
 
     {
         /// Transferred main currency amount to the account on the relay chain.
@@ -90,7 +93,10 @@ decl_event! {
         TransferredTokensFromRelayChain(AccountId, Balance),
 
         /// Transferred custom asset to the account from the given parachain account.
-        TransferredAssetViaXCMP(ParaId, Option<AssetId>, AccountId, AssetId, Balance),
+        DepositAssetViaXCMP(ParaId, ParaChainAssetId, AccountId, DexAssetId, Balance),
+
+        /// Transferred custom asset to the account from the given parachain account.
+        WithdrawAssetViaXCMP(ParaId, ParaChainAssetId, AccountId, DexAssetId, Balance),
     }
 }
 
@@ -153,8 +159,10 @@ decl_module! {
 
             T::XCMPMessageSender::send_xcmp_message(
                 para_id,
-                &XCMPMessage::TransferToken(dest, amount, para_asset_id),
+                &XCMPMessage::TransferToken(dest.clone(), amount, para_asset_id),
             ).expect("Should not fail; qed");
+
+            Self::deposit_event(Event::<T>::WithdrawAssetViaXCMP(para_id, para_asset_id, dest, asset_id, amount));
         }
 
     }
@@ -224,7 +232,7 @@ impl<T: Trait> XCMPMessageHandler<XCMPMessage<T::AccountId, BalanceOf<T>, AssetI
             XCMPMessage::TransferToken(dest, amount, para_asset_id) => {
                 if let Some(asset_id) = asset_id {
                     <dex_pallet::Module<T>>::mint_asset(&dest, asset_id, *amount);
-                    Self::deposit_event(Event::<T>::TransferredAssetViaXCMP(
+                    Self::deposit_event(Event::<T>::DepositAssetViaXCMP(
                         src,
                         // para asset_id
                         *para_asset_id,
@@ -241,7 +249,7 @@ impl<T: Trait> XCMPMessageHandler<XCMPMessage<T::AccountId, BalanceOf<T>, AssetI
 
                     <NextAssetId<T>>::mutate(|asset_id| *asset_id += AssetIdOf::<T>::one());
 
-                    Self::deposit_event(Event::<T>::TransferredAssetViaXCMP(
+                    Self::deposit_event(Event::<T>::DepositAssetViaXCMP(
                         src,
                         // para asset_id
                         *para_asset_id,

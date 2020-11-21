@@ -53,10 +53,17 @@ impl<AccountId: Default + Debug, Balance: Default + Debug> DexTreasury<AccountId
     }
 }
 
-pub trait Trait: system::Trait {
+pub trait Trait: system::Trait + pallet_timestamp::Trait {
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 
     type Currency: Currency<Self::AccountId>;
+
+    // Used for cumulative price calculation
+    type IMoment: From<<Self as pallet_timestamp::Trait>::Moment>
+        + Into<BalanceOf<Self>>
+        + Codec
+        + BaseArithmetic
+        + Copy;
 
     // Id representation for assets, located on other parachains.
     // Some ids can be reserved to specify internal assets.
@@ -112,7 +119,7 @@ decl_event!(
         AssetId = <T as Trait>::AssetId,
         Shares = BalanceOf<T>,
         Balance = BalanceOf<T>,
-        TreasuryFee = Option<BalanceOf<T>>
+        TreasuryFee = Option<BalanceOf<T>>,
     {
         Exchanged(AccountId, AssetId, Balance, AssetId, Balance, TreasuryFee),
         Invested(AccountId, AssetId, AssetId, Shares),
@@ -128,8 +135,8 @@ decl_error! {
         InvalidExchange,
         InvariantNotNull,
         TotalSharesNotNull,
-        LowKsmAmount,
-        LowassetAmount,
+        LowFirstAssetAmount,
+        LowSecondAssetAmount,
         FirstAssetAmountBelowExpectation,
         SecondAssetAmountBelowExpectation,
         InsufficientPool,
@@ -160,13 +167,14 @@ decl_module! {
             let (first_asset_id, first_asset_amount, second_asset_id, second_asset_amount) =
                 Self::adjust_assets_amount_order(first_asset_id, first_asset_amount, second_asset_id, second_asset_amount);
 
+            // TODO adjust first and second min asset amounts
             ensure!(
                 first_asset_amount > BalanceOf::<T>::zero(),
-                Error::<T>::LowKsmAmount
+                Error::<T>::LowFirstAssetAmount
             );
             ensure!(
                 second_asset_amount > BalanceOf::<T>::zero(),
-                Error::<T>::LowassetAmount
+                Error::<T>::LowSecondAssetAmount
             );
 
             Self::ensure_exchange_not_exists(first_asset_id, second_asset_id)?;
@@ -174,7 +182,7 @@ decl_module! {
             Self::ensure_sufficient_balances(&sender, first_asset_id, first_asset_amount, second_asset_id, second_asset_amount)?;
 
             // TODO adjust shares allocation
-            let exchange = Exchange::<T>::initialize_new(first_asset_amount, second_asset_amount, sender.clone())?;
+            let (exchange, initial_shares) = Exchange::<T>::initialize_new(first_asset_amount, second_asset_amount, sender.clone())?;
 
             //
             // == MUTATION SAFE ==
@@ -184,8 +192,7 @@ decl_module! {
 
             Exchanges::<T>::insert(first_asset_id, second_asset_id, exchange);
 
-            // rework to get the right shares amount
-            Self::deposit_event(RawEvent::Invested(sender, first_asset_id, second_asset_id, BalanceOf::<T>::one()));
+            Self::deposit_event(RawEvent::Invested(sender, first_asset_id, second_asset_id, initial_shares));
             Ok(())
         }
 

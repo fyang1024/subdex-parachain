@@ -27,6 +27,11 @@ default-features = false
 git = 'https://github.com/paritytech/substrate.git'
 branch = "rococo-branch"
 
+[dependencies.pallet-timestamp]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+branch = "rococo-branch"
+
 [dev-dependencies.sp-core]
 default-features = false
 git = 'https://github.com/paritytech/substrate.git'
@@ -69,6 +74,7 @@ std = [
     'serde',
     'codec/std',
     'balances/std',
+    'pallet-timestamp/std',
     'frame-support/std',
     'frame-system/std',
     'sp-std/std',

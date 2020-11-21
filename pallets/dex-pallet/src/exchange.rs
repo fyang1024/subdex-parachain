@@ -6,7 +6,15 @@ pub struct Exchange<T: Trait> {
     first_asset_pool: BalanceOf<T>,
     second_asset_pool: BalanceOf<T>,
     pub invariant: BalanceOf<T>,
-    total_shares: BalanceOf<T>,
+    // total pool shares
+    pub total_shares: BalanceOf<T>,
+    // last timestamp, after pool update performed, needed for time_elapsed calculation
+    pub last_timestamp: T::IMoment,
+    // first_asset_pool / second_asset_pool * time_elapsed
+    pub price1_cumulative_last: BalanceOf<T>,
+    // second_asset_pool / first_asset_pool * time_elapsed
+    pub price2_cumulative_last: BalanceOf<T>,
+    // individual shares
     shares: BTreeMap<T::AccountId, BalanceOf<T>>,
 }
 
@@ -17,6 +25,9 @@ impl<T: Trait> Default for Exchange<T> {
             second_asset_pool: BalanceOf::<T>::default(),
             invariant: BalanceOf::<T>::default(),
             total_shares: BalanceOf::<T>::default(),
+            last_timestamp: <pallet_timestamp::Module<T>>::get().into(),
+            price1_cumulative_last: BalanceOf::<T>::default(),
+            price2_cumulative_last: BalanceOf::<T>::default(),
             shares: BTreeMap::new(),
         }
     }
@@ -50,13 +61,19 @@ impl<T: Trait> Exchange<T> {
     fn sqrt(y: BalanceOf<T>) -> Result<BalanceOf<T>, Error<T>> {
         let z = if y > 3.into() {
             let mut z = y;
-            let mut x = y.checked_div(&2.into()).map(|res| res.checked_add(&1.into())).flatten()
+            let mut x = y
+                .checked_div(&2.into())
+                .map(|res| res.checked_add(&1.into()))
+                .flatten()
                 .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
             while x < z {
                 z = x;
-                x = y.checked_div(&(x + x)).map(|res| res.checked_div(&2.into())).flatten()
+                x = y
+                    .checked_div(&(x + x))
+                    .map(|res| res.checked_div(&2.into()))
+                    .flatten()
                     .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
-            };
+            }
             z
         } else if y != BalanceOf::<T>::zero() {
             BalanceOf::<T>::one()
@@ -66,7 +83,7 @@ impl<T: Trait> Exchange<T> {
         Ok(z)
     }
 
-    // Reconsider this approach after setting 
+    // Reconsider this approach after setting
     // first_asset & second_asset minimal amount restrictions
 
     // fn get_min_fee() -> BalanceOf<T> {
@@ -82,13 +99,13 @@ impl<T: Trait> Exchange<T> {
         first_asset_amount: BalanceOf<T>,
         second_asset_amount: BalanceOf<T>,
         sender: T::AccountId,
-    ) -> Result<Self, Error<T>> {
+    ) -> Result<(Self, BalanceOf<T>), Error<T>> {
         let mut shares_map = BTreeMap::new();
         // let min_fee = Self::get_min_fee();
 
         let initial_shares = Self::sqrt(first_asset_amount * second_asset_amount)?;
-            // .checked_sub(&min_fee)
-            // .ok_or(Error::<T>::UnderflowOccured)?;
+        // .checked_sub(&min_fee)
+        // .ok_or(Error::<T>::UnderflowOccured)?;
 
         shares_map.insert(sender, initial_shares);
         let exchange = Self {
@@ -99,8 +116,11 @@ impl<T: Trait> Exchange<T> {
                 .ok_or(Error::<T>::UnderflowOrOverflowOccured)?,
             total_shares: initial_shares,
             shares: shares_map,
+            last_timestamp: <pallet_timestamp::Module<T>>::get().into(),
+            price1_cumulative_last: BalanceOf::<T>::default(),
+            price2_cumulative_last: BalanceOf::<T>::default(),
         };
-        Ok(exchange)
+        Ok((exchange, initial_shares))
     }
 
     fn perform_first_to_second_asset_swap_calculation(
@@ -149,10 +169,12 @@ impl<T: Trait> Exchange<T> {
                 .flatten()
                 .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
             let exchange_fee = fee - treasury_fee;
-            let swap_delta = self.perform_first_to_second_asset_swap_calculation(exchange_fee, first_asset_amount)?;
+            let swap_delta = self
+                .perform_first_to_second_asset_swap_calculation(exchange_fee, first_asset_amount)?;
             Ok((swap_delta, Some((treasury_fee, dex_treasury.dex_account))))
         } else {
-            let swap_delta = self.perform_first_to_second_asset_swap_calculation(fee, first_asset_amount)?;
+            let swap_delta =
+                self.perform_first_to_second_asset_swap_calculation(fee, first_asset_amount)?;
             Ok((swap_delta, None))
         }
     }
@@ -203,10 +225,14 @@ impl<T: Trait> Exchange<T> {
                 .flatten()
                 .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
             let exchange_fee = fee - treasury_fee;
-            let swap_delta = self.perform_second_to_first_asset_swap_calculation(exchange_fee, second_asset_amount)?;
+            let swap_delta = self.perform_second_to_first_asset_swap_calculation(
+                exchange_fee,
+                second_asset_amount,
+            )?;
             Ok((swap_delta, Some((treasury_fee, dex_treasury.dex_account))))
         } else {
-            let swap_delta = self.perform_second_to_first_asset_swap_calculation(fee, second_asset_amount)?;
+            let swap_delta =
+                self.perform_second_to_first_asset_swap_calculation(fee, second_asset_amount)?;
             Ok((swap_delta, None))
         }
     }
@@ -305,6 +331,36 @@ impl<T: Trait> Exchange<T> {
     ) -> Result<(), Error<T>> {
         self.first_asset_pool = first_asset_pool;
         self.second_asset_pool = second_asset_pool;
+
+        let now: T::IMoment = <pallet_timestamp::Module<T>>::get().into();
+        let time_elapsed: T::IMoment = now
+            .checked_sub(&self.last_timestamp)
+            .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
+
+        let price1_cumulative = first_asset_pool
+            .checked_div(&second_asset_pool)
+            .map(|result| result.checked_mul(&time_elapsed.into()))
+            .flatten()
+            .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
+
+        self.price1_cumulative_last = self
+            .price1_cumulative_last
+            .checked_add(&price1_cumulative)
+            .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
+
+        let price2_cumulative = second_asset_pool
+            .checked_div(&first_asset_pool)
+            .map(|result| result.checked_mul(&time_elapsed.into()))
+            .flatten()
+            .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
+
+        self.price2_cumulative_last = self
+            .price2_cumulative_last
+            .checked_add(&price2_cumulative)
+            .ok_or(Error::<T>::UnderflowOrOverflowOccured)?;
+
+        self.last_timestamp = now;
+
         self.invariant = self
             .first_asset_pool
             .checked_mul(&self.second_asset_pool)
