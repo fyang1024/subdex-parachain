@@ -122,17 +122,16 @@ fn testnet_genesis(
         }),
         dex_pallet: Some(DexPalletConfig {
             dex_treasury: DexTreasury::new(root_key, 1, 2),
+            assets: vec![0, 1, 2],
+            initial_balance: 10u128.pow(12 + 6),
+            endowed_accounts: endowed_accounts,
         }),
         dex_xcmp: Some(DexXCMPConfig {
             // 0 id reserved for main currency
             next_asset_id: 1,
         }),
         pallet_balances: Some(BalancesConfig {
-            balances: endowed_accounts
-                .iter()
-                .cloned()
-                .map(|k| (k, 1 << 60))
-                .collect(),
+            balances: vec![] //using endowed_accounts again causes error 'value borrowed here after move'
         }),
     }
 }

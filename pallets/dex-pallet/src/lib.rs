@@ -90,6 +90,19 @@ decl_storage! {
         // Treasury data (used to charge fee, when enabled)
         pub DEXTreasury get(fn dex_treasury) config(): DexTreasury<T::AccountId, BalanceOf<T>>;
     }
+    add_extra_genesis {
+        config(assets): Vec<T::AssetId>;
+        config(initial_balance): BalanceOf<T>;
+        config(endowed_accounts): Vec<T::AccountId>;
+
+        build(|config: &GenesisConfig<T>| {
+            config.assets.iter().for_each(|asset_id| {
+                config.endowed_accounts.iter().cloned().for_each(|account_id| {
+                    <AssetBalances<T>>::insert(account_id, asset_id, &config.initial_balance);
+                });
+            });
+        });
+    }
 }
 
 decl_event!(
